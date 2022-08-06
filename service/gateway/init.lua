@@ -29,9 +29,23 @@ function gateplayer()
     }
     return m
 end
-
+------------------------------------------------------------------------------------------------------------------------------------------------------
+-- 登出
 local disconnect = function (fd)
-    
+    local c = conns[fd]
+    if not c then
+        return
+    end
+
+    local playerid = c.playerid
+    -- 未完成登录
+    if not playerid then
+        return
+    else
+        -- 已在游戏中
+        players[playerid] = nil
+        skynet.call("agentmgr", "lua", "reqkick", playerid, "断线")
+    end
 end
 
 -- 解码
@@ -58,7 +72,7 @@ end
 -- 消息分发
 local process_msg = function (fd, msgstr)
     local cmd, msg = str_unpack(msgstr)
-    skynet.error("recv"..fd.."["..cmd.."] {"..table.concat(msg, ",").."}")
+    skynet.error("recv "..fd.." ["..cmd.."] {"..table.concat(msg, ",").."}")
 
     local conn = conns[fd]
     local playerid = conn.playerid
@@ -102,7 +116,7 @@ local recv_loop = function (fd)
             readbuff = readbuff..recvstr
             readbuff = process_buff(fd, readbuff) -- 处理客户端协议
         else
-            -- 断开连接
+            -- 断开连接,客户端掉线
             skynet.error("socket close"..fd)
             disconnect(fd) -- 处理断开事务
             socket.close(fd)
@@ -119,6 +133,73 @@ local connect = function (fd, addr)
     c.fd = fd
     skynet.fork(recv_loop, fd)
 end
+
+------------------------------------------------------------------------------------------------------------------------------------------------------
+-- 远程调用接口
+-- login消息转发到客户端
+s.resp.send_by_fd = function (source, fd, msg)
+    if not conns[fd] then
+        return
+    end
+
+    local buff =  str_pack(msg[1], msg)
+    skynet.error("send "..fd.." ["..msg[1].."] {"..table.concat(msg, ",").."}")
+    socket.write(fd, buff)
+end
+
+-- agent消息转发客户端
+s.resp.send = function (source, playerid, msg)
+    local gplayer = players[playerid]
+    if gplayer == nil then
+        return
+    end
+
+    local c = gplayer.conn
+    if c == nil then
+        return
+    end
+
+    s.resp.send_by_fd(nil, c.fd, msg)
+end
+
+-- login确认登录情况
+s.resp.sure_agent = function (source, fd, playerid, agent)
+    local conn = conns[fd]
+    if not conn then
+        skynet.call("agentmgr", "lua", "reqkick", playerid, "account login failed!")
+        return false
+    end
+
+    -- 保存登录成功后的信息
+    conn.playerid = playerid
+
+    local gplayer = gateplayer()
+    gplayer.playerid = playerid
+    gplayer.agent = agent
+    gplayer.conn = conn
+    players[playerid] = gplayer
+
+    return true
+end
+
+-- agentmgr将玩家踢下线
+s.resp.kick = function (source, playerid)
+    local gplayer = players[playerid]
+    if not gplayer then
+        return
+    end
+
+    local c = gplayer.conn
+    players[playerid] = nil
+
+    if not c then
+        return
+    end
+    conns[c.fd] = nil
+    disconnect(c.fd)
+    socket.close(c.fd)
+end
+------------------------------------------------------------------------------------------------------------------------------------------------------
 
 function s.init()
     -- skynet.error("[start]"..s.name.." "..s.id)

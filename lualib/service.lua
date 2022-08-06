@@ -15,27 +15,13 @@ local M = {
     resp = {},
 }
 
--- 启动逻辑
-function init()
-    skynet.dispatch("lua", dispatch)
-    if M.init then
-        M.init()
-    end
-end
-
-function M.start(name, id, ...)
-    M.name = name
-    M.id = tonumber(id)
-    skynet.start(init)
-end
-
--- 消息分发
 function traceback(err)
     skynet.error(tostring(err))
     skynet.error(debug.traceback())
 end
 
-function dispatch(session, address, cmd, ...)
+-- 消息分发
+local dispatch = function (session, address, cmd, ...)
     local fun = M.resp[cmd]
     if not fun then
         skynet.ret()
@@ -56,6 +42,21 @@ function dispatch(session, address, cmd, ...)
 
     skynet.retpack(table.unpack(ret, 2)) -- 返回结果给发送方
 end
+
+-- 启动逻辑
+function init()
+    skynet.dispatch("lua", dispatch)
+    if M.init then
+        M.init()
+    end
+end
+
+function M.start(name, id, ...)
+    M.name = name
+    M.id = tonumber(id)
+    skynet.start(init)
+end
+
 
 -- 辅助方法
     -- 参数node代表接收方所在的节点，srv代表接收方的服务名。
