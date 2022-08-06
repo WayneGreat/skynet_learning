@@ -1,0 +1,11 @@
+local skynet = require "skynet"
+local runconfig = require "runconfig"
+
+skynet.start(function ()
+    -- 初始化
+    skynet.error("[start main]")
+    skynet.newservice("gateway", "gateway", 1)
+    -- 退出
+    skynet.exit()
+end)
+
