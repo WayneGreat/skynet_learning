@@ -82,6 +82,8 @@ local process_msg = function (fd, msgstr)
         local nodecfg = runconfig[node]
         local loginid = math.random(1, #nodecfg.login)
         local login = "login"..loginid
+        -- skynet.error("gateway:login = ", login)
+        -- skynet.error("gateway:cmd = ", cmd)
         skynet.send(login, "lua", "client", fd, cmd, msg) -- client为自定义的消息名
     -- 完成登录流程
     else
@@ -108,7 +110,7 @@ end
 
 local recv_loop = function (fd)
     socket.start(fd)
-    skynet.error("socket connected"..fd)
+    skynet.error("socket connected "..fd)
     local readbuff = "" -- 定义字符串缓冲区，为处理tcp数据粘包
     while true do
         local recvstr = socket.read(fd) -- 读取连接数据（阻塞）
