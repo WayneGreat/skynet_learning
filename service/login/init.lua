@@ -24,12 +24,13 @@ s.client.login = function (fd, msg, source)
         return {"login", 1, "请求mgr失败"}
     end
     -- 回应gate
-    isok = skynet.call(gate, "lua", "sure_agent", fd, playerid, agent)
+    local key = ""
+    isok, key = skynet.call(gate, "lua", "sure_agent", fd, playerid, agent)
     if not isok then
         return {"login", 1, "gate注册失败"}
     end
     skynet.error("login succ "..playerid)
-    return {"login", 0, "登录成功"}
+    return {"login", 0, "登录成功", key}
 end
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------

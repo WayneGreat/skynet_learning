@@ -24,6 +24,16 @@ function mgrplayer()
 end
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------
+-- 获取整个服务器在线人数
+local function get_onlie_count()
+    local count = 0
+    for playerid, player in ipairs(players) do
+        count = count + 1
+    end
+    return count
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------------------
 -- 远程调用接口
 -- login请求登录接口
 s.resp.reqlogin = function(source, playerid, node, gate)
@@ -89,6 +99,29 @@ s.resp.reqkick = function(source, playerid, reason)
     players[playerid] = nil
 
     return true
+end
+
+s.resp.shutdown = function(source, num)
+    -- 当前玩家数
+    local count = get_onlie_count()
+    -- 踢下线
+    local n = 0
+    for playerid, player in pairs(players) do
+        skynet.fork(s.resp.reqkick, nil, playerid, "close server")
+        n = n + 1 -- 计数，总共发num条下线消息
+        if n > num then
+            break
+        end
+    end
+    -- 等待玩家数(num)下线
+    while true do
+        skynet.sleep(200)
+        local new_count = get_onlie_count()
+        skynet.error("shutdown online:"..new_count)
+        if new_count <= 0 or new_count <= count - num then
+            return new_count
+        end
+    end
 end
 
 s.start(...)

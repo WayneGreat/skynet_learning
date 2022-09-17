@@ -11,6 +11,9 @@ local runconfig = require "runconfig"
 conns = {} -- [fd] = conn
 players = {} -- [playerid] = gateplayer
 
+-- 每个gate服务的关闭连接入口标志
+local closing =false
+
 -- 连接类
 function conn()
     local m = {
@@ -26,11 +29,15 @@ function gateplayer()
         playerid = nil,
         agent = nil,
         conn = nil,
+        -- 重连时的身份标识
+        key = math.random(1, 999999999),
+        lost_conn_time = nil,
+        msgcache = {} -- 客户端短暂掉线时，未发送的消息缓存
     }
     return m
 end
 ------------------------------------------------------------------------------------------------------------------------------------------------------
--- 登出
+-- 登出/掉线
 local disconnect = function (fd)
     local c = conns[fd]
     if not c then
@@ -43,8 +50,18 @@ local disconnect = function (fd)
         return
     else
         -- 已在游戏中
-        players[playerid] = nil
-        skynet.call("agentmgr", "lua", "reqkick", playerid, "断线")
+        local gplayer = players[playerid]
+        -- 当客户端掉线时，gateway不会去触发掉线请求（即向agentmgr请求reqkick）
+        -- 掉线时仅仅取消玩家对象（gplayer）与旧连接（conn）的关联（即gplayer.conn = nil）
+        -- 为防止客户端不再发起重连导致的资源占用，程序会开启一个定时器（skynet.timeout）
+        -- 若5分钟后依然是掉线状态（if gplayer. conn ~= nil为假），则向agentmgr请求下线
+        gplayer.conn = nil
+        skynet.timeout(300 * 100, function ()
+            if gplayer.conn ~= nil then
+                return
+            end
+            skynet.call("agentmgr", "lua", "reqkick", playerid, "断线超时")
+        end)
     end
 end
 
@@ -69,10 +86,58 @@ local str_pack = function (cmd, msg)
     return table.concat(msg, ",").."\r\n"
 end
 
+-- 断线重连处理
+local function process_reconnect(fd, msg)
+    local playerid = tonumber(msg[2])
+    local key = tonumber(msg[3])
+
+    local conn = conns[fd]
+    if not conn then
+        -- 客户端与服务器未通信
+        skynet.error("reconnect fail, conn not exist")
+        return
+    end
+
+    local gplayer = players[playerid]
+    if not gplayer then
+        -- 未登录
+        skynet.error("reconnect fail, player not exist")
+        return
+    end
+
+    if gplayer.conn then
+        -- 未掉线
+        skynet.error("reconnect fail, conn not break")
+        return
+    end
+
+    if gplayer.key ~= key then
+        skynet.error("reconnect fail, key error")
+        return
+    end
+
+    -- bind
+    gplayer.conn = conn
+    conn.playerid = playerid
+    -- 回应
+    s.resp.send_by_fd(nil, fd, {"reconnect", 0})
+    -- 发送缓存消息
+    for i, cmsg in ipairs(gplayer.msgcache) do
+        s.resp.send_by_fd(nil, fd, cmsg)
+    end
+    gplayer.msgcache = {}
+end
+
 -- 消息分发
 local process_msg = function (fd, msgstr)
     local cmd, msg = str_unpack(msgstr)
     skynet.error("recv "..fd.." ["..cmd.."] {"..table.concat(msg, ",").."}")
+
+    -- 特殊断线重连
+    if cmd == "reconnect" then
+        process_reconnect(fd, msg)
+        return
+    end
 
     local conn = conns[fd]
     local playerid = conn.playerid
@@ -127,15 +192,6 @@ local recv_loop = function (fd)
     end
 end
 
--- 当客户端连接上时，gateway创建代表该连接的conn对象，并开启协程recv_loop专接收该连接的数据
-local connect = function (fd, addr)
-    print("connect from "..addr.." "..fd)
-    local c = conn()
-    conns[fd] = c
-    c.fd = fd
-    skynet.fork(recv_loop, fd)
-end
-
 ------------------------------------------------------------------------------------------------------------------------------------------------------
 -- 远程调用接口
 -- login消息转发到客户端
@@ -158,6 +214,12 @@ s.resp.send = function (source, playerid, msg)
 
     local c = gplayer.conn
     if c == nil then
+        -- return
+        table.insert(gplayer.msgcache, msg)
+        local len = #gplayer.msgcache
+        if len > 500 then
+            skynet.call("agentmgr", "lua", "reqkick", playerid, "gate消息缓存过多")
+        end
         return
     end
 
@@ -181,7 +243,7 @@ s.resp.sure_agent = function (source, fd, playerid, agent)
     gplayer.conn = conn
     players[playerid] = gplayer
 
-    return true
+    return true, gplayer.key
 end
 
 -- agentmgr将玩家踢下线
@@ -201,7 +263,24 @@ s.resp.kick = function (source, playerid)
     disconnect(c.fd)
     socket.close(c.fd)
 end
+
+s.resp.shutdown = function()
+    closing = true
+end
 ------------------------------------------------------------------------------------------------------------------------------------------------------
+-- 当客户端连接上时，gateway创建代表该连接的conn对象，并开启协程recv_loop专接收该连接的数据
+local connect = function (fd, addr)
+    -- 关服时判断
+    if closing then
+        return
+    end
+
+    print("connect from "..addr.." "..fd)
+    local c = conn()
+    conns[fd] = c
+    c.fd = fd
+    skynet.fork(recv_loop, fd)
+end
 
 function s.init()
     -- skynet.error("[start]"..s.name.." "..s.id)

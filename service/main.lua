@@ -42,6 +42,16 @@ skynet.start(function()
         skynet.name("agentmgr", proxy)
     end
 
+    -- scene
+    -- todo: 在实际项目中，可以仿照agent动态开启场景服务。
+    for _, sid in pairs(runconfig.scene[mynode] or {}) do
+        local srv = skynet.newservice("scene", "scene", sid)
+        skynet.name("scene"..sid, srv)
+    end
+
+    -- admin: 管理员服务，用于管理服务，如：关服
+    skynet.newservice("admin", "admin", 0)
+
     -- 退出
     skynet.exit()
 end)
